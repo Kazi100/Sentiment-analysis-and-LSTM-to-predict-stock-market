@@ -1,0 +1,360 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import nltk
+nltk.download('vader_lexicon')
+import os
+import sys
+import time
+from tqdm._tqdm_notebook import tqdm_notebook
+import pickle
+from keras.models import Sequential, load_model
+from keras.layers import Dense, Dropout
+from keras.layers import LSTM
+from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, CSVLogger
+from keras import optimizers
+ # from keras.wrappers.scikit_learn import KerasClassifier
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+import logging
+
+df = pd.read_csv('reddit_wsb.csv')
+df.tail()
+
+from PIL import Image
+from wordcloud import WordCloud, STOPWORDS, ImageColorGenerator
+comment_words = ''
+stopwords = set(STOPWORDS)
+for val in df.title:
+# typecaste each val to string
+val = str(val)
+
+# split the value
+tokens = val.split()
+
+# Converts each token into lowercase
+for i in range(len(tokens)):
+tokens[i] = tokens[i].lower()
+
+comment_words += " ".join(tokens)+" "
+
+wordcloud = WordCloud(width = 800, height = 800,
+background_color ='white',
+stopwords = stopwords,
+min_font_size = 10).generate(comment_words)
+
+# plot the WordCloud image
+plt.figure(figsize = (8, 8), facecolor = None)
+plt.imshow(wordcloud)
+plt.axis("off")
+plt.tight_layout(pad = 0)
+
+plt.show()
+
+ from tqdm import tqdm
+
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+new_words = {'yolo': 9, 'rise': 9,'increases': 9, 'hikes': 9, 'jumps': 9, 'gain': 9,'profit': 9, 'buy': 9, 'nifty up': 9,'hiked': 9, 'record high': 9,'falls': -9, 'drops': -9, 'dips': -9,
+'declines': -9, 'decline': -9,'lose': -9, 'loss': -9, 'shreds': -9, 'sell': -9, 'recession': -9, 'record low': -9, 'sensex up': 9, 'nifty down': -9, 'sensex down': -9}
+
+analyser = SentimentIntensityAnalyzer()
+analyser.lexicon.update(new_words)
+
+for i in tqdm(df.itertuples()):
+score = analyser.polarity_scores(df.iloc[i[0]]['title'])
+df.at[i[0], 'score'] = score['compound']
+#df["sentiment"] = score['compound']
+#print(df["sentiment"])
+if score['compound'] >= 0:
+df.at[i[0], 'sentiment'] = score['compound']
+else:
+df.at[i[0], 'sentiment'] = score['compound']
+
+df.head()
+
+
+sentiment_data = df[["timestamp","sentiment"]]
+sentiment_data.head()
+
+#!pip install twint
+!pip install yfinance
+!pip install yahoofinancials
+
+import pandas as pd
+import yfinance as yf
+from yahoofinancials import YahooFinancials
+AMC_df = yf.download('AMC',
+start='2014-01-01',
+end='2021-06-15',
+progress=False)
+AMC_df.head()
+ticker = yf.Ticker('AAPL')
+AAPL_df = ticker.history(period="10y")
+AAPL_df['Close'].plot(title="AMC's stock price")
+AMC_df.reset_index(level=0, inplace=True)
+AMC_df.info()
+sentiment_data.info()
+from datetime import datetime
+def convert_datetime(dt):
+return datetime.strftime(dt, '%Y-%m-%d')
+AMC_df['Date']= AMC_df['Date'].apply(convert_datetime)
+ AMC_df.head(8)
+def date_correction(dt):
+return dt[:10]
+sentiment_data['timestamp']= sentiment_data['timestamp'].apply(date_correction)
+sentiment_data.head()
+"""**Joining AMC and Sentiment Dataset**"""
+ master_data = pd.merge(AMC_df, sentiment_data, 'inner', left_on = ["Date"], right_on = ["timestamp"] )
+master_data.head()
+ """**For our Analysis we require Close price and sentiment score**"""
+ master_data['Date'].unique()
+data = master_data[['Date', 'sentiment', 'Close']]
+data.head()
+# Splitting DATa into 90-10% Split
+train_set, test_set= np.split(data, [int(.90 *len(data))])
+ """**Normalizing Data**"""
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
+scaler = MinMaxScaler()
+X_train_set_normalized = scaler.fit_transform(train_set.iloc[:, 1:3].values)
+X_test_set_normalized = scaler.fit_transform(test_set.iloc[:, 1:3].values)
+scaler1 = MinMaxScaler()
+Y_train_set_normalized = scaler1.fit_transform(train_set.iloc[:, 2:3].values)
+#scaler1 = MinMaxScaler(feature_range=(-1, 1))
+Y_test = scaler1.fit_transform(test_set.iloc[:, 2:3].values)
+X_train = np.reshape(X_train_set_normalized, (X_train_set_normalized.shape[0], X_train_set_normalized.shape[1], 1))
+Y_train = np.reshape(Y_train_set_normalized, (Y_train_set_normalized.shape[0], Y_train_set_normalized.shape[1], 1))
+X_test = np.reshape(X_test_set_normalized, (X_test_set_normalized.shape[0], X_test_set_normalized.shape[1], 1))
+#Y_test = np.reshape(Y_test_set_normalized, (Y_test_set_normalized.shape[0], Y_test_set_normalized.shape[1], 1))
+"""**LSTM Model**
+ """
+# design network
+model = Sequential()
+model.add(LSTM(100, input_shape=(X_train.shape[1], X_train.shape[2]), return_sequences = True))
+model.add(LSTM(50, activation='relu', return_sequences=True))
+model.add(Dropout(0.25))
+model.add(LSTM(10, activation='relu'))
+
+model.add(Dense(20, activation='relu'))
+model.add(Dense(10, activation='relu'))
+model.add(Dense(5, activation='relu'))
+model.add(Dropout(0.1))
+model.add(Dense(1))
+model.compile(optimizer='adam', loss='mse')
+# fit network
+history = model.fit(X_train, Y_train, epochs=25, batch_size=16, validation_data=(X_test, Y_test), verbose=2)
+# plot history
+
+from matplotlib import pyplot
+print(model.summary())
+pyplot.plot(history.history['loss'], label='train')
+pyplot.plot(history.history['val_loss'], label='test')
+pyplot.xlabel("Epoch")
+pyplot.ylabel("Mean Square Error")
+pyplot.title('MSE-AMC with sentiment')
+pyplot.legend()
+pyplot.show()
+ """**Prediction**
+"""
+pred = model.predict(X_test)
+import sklearn.metrics
+def regression_score(y_true, y_pred, metric):
+function = getattr(sklearn.metrics, metric)
+return function(y_true, y_pred)
+"""**Mean Absolute Error**"""
+#MAE
+regression_score(Y_test.astype(np.float) ,pred.astype(np.float),"mean_absolute_error")
+"""**Root Mean Square Error**"""
+from sklearn.metrics import mean_squared_error
+rmse = mean_squared_error(Y_test.astype(np.float) ,pred.astype(np.float), squared=False)
+rmse
+
+"""**MAPE**"""
+import numpy as np
+def mean_absolute_percentage_error(y_true, y_pred):
+return np.mean(np.abs((y_true - y_pred) / y_pred)) * 100
+mean_absolute_percentage_error(Y_test.astype(np.float) ,pred.astype(np.float))
+
+
+
+Appendix 2: Baseline LSTM for AMC Stock without sentiment Analysis
+1. import numpy as np
+2. import pandas as pd
+3. import matplotlib.pyplot as plt
+4. import matplotlib.ticker as ticker
+5. import nltk
+6. nltk.download('vader_lexicon')
+7.
+8. import numpy as np
+9. import os
+10. import sys
+11. import time
+12. import pandas as pd
+13. from tqdm._tqdm_notebook import tqdm_notebook
+14. import pickle
+15. from keras.models import Sequential, load_model
+16. from keras.layers import Dense, Dropout
+17. from keras.layers import LSTM
+18. from keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau, CSVLogger
+19. from keras import optimizers
+20. # from keras.wrappers.scikit_learn import KerasClassifier
+21. from sklearn.preprocessing import MinMaxScaler
+22. from sklearn.model_selection import train_test_split
+23. from sklearn.metrics import mean_squared_error
+
+import logging
+
+df = pd.read_csv('reddit_wsb.csv')
+df.tail()
+
+from tqdm import tqdm
+
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+new_words = {'yolo': 9, 'rise': 9,'increases': 9, 'hikes': 9, 'jumps': 9, 'gain': 9,'profit': 9, 'buy': 9, 'nifty up': 9,'hiked': 9, 'record high': 9,'falls': -9, 'drops': -9, 'dips': -9,
+'declines': -9, 'decline': -9,'lose': -9, 'loss': -9, 'shreds': -9, 'sell': -9, 'recession': -9, 'record low': -9, 'sensex up': 9, 'nifty down': -9, 'sensex down': -9}
+
+analyser = SentimentIntensityAnalyzer()
+analyser.lexicon.update(new_words)
+
+for i in tqdm(df.itertuples()):
+score = analyser.polarity_scores(df.iloc[i[0]]['title'])
+df.at[i[0], 'score'] = score['compound']
+#df["sentiment"] = score['compound']
+#print(df["sentiment"])
+if score['compound'] >= 0:
+df.at[i[0], 'sentiment'] = score['compound']
+else:
+df.at[i[0], 'sentiment'] = score['compound']
+
+df.head()
+
+sentiment_data = df[["timestamp","sentiment"]]
+sentiment_data.head()
+
+#!pip install twint
+!pip install yfinance
+!pip install yahoofinancials
+
+import pandas as pd
+import yfinance as yf
+from yahoofinancials import YahooFinancials
+AMC_df = yf.download('AMC',
+start='2014-01-01',
+end='2021-06-15',
+progress=False)
+
+AMC_df.head()
+
+AMC_df.reset_index(level=0, inplace=True)
+
+AMC_df.info()
+
+sentiment_data.info()
+
+from datetime import datetime
+def convert_datetime(dt):
+return datetime.strftime(dt, '%Y-%m-%d')
+AMC_df['Date']= AMC_df['Date'].apply(convert_datetime)
+
+AMC_df.head(8)
+
+def date_correction(dt):
+return dt[:10]
+sentiment_data['timestamp']= sentiment_data['timestamp'].apply(date_correction)
+sentiment_data.head()
+
+"""**Joining AMC and Sentiment Dataset**"""
+
+master_data = pd.merge(AMC_df, sentiment_data, 'inner', left_on = ["Date"], right_on = ["timestamp"] )
+
+master_data.head()
+
+"""**For our Analysis we require Close price and sentiment score**"""
+
+master_data['Date'].unique()
+data = master_data[['Date', 'sentiment', 'Close']]
+data.head()
+
+ # Splitting DATa into 90-10% Split
+train_set, test_set= np.split(data, [int(.90 *len(data))])
+
+"""**Normalizing Data**"""
+
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
+
+scaler = MinMaxScaler()
+X_train_set_normalized = scaler.fit_transform(train_set.iloc[:, 2:3].values)
+
+X_test_set_normalized = scaler.fit_transform(test_set.iloc[:, 2:3].values)
+scaler1 = MinMaxScaler()
+Y_train_set_normalized = scaler1.fit_transform(train_set.iloc[:, 2:3].values)
+#scaler1 = MinMaxScaler(feature_range=(-1, 1))
+Y_test = scaler1.fit_transform(test_set.iloc[:, 2:3].values)
+X_train = np.reshape(X_train_set_normalized, (X_train_set_normalized.shape[0], X_train_set_normalized.shape[1], 1))
+Y_train = np.reshape(Y_train_set_normalized, (Y_train_set_normalized.shape[0], Y_train_set_normalized.shape[1], 1))
+X_test = np.reshape(X_test_set_normalized, (X_test_set_normalized.shape[0], X_test_set_normalized.shape[1], 1))
+#Y_test = np.reshape(Y_test_set_normalized, (Y_test_set_normalized.shape[0], Y_test_set_normalized.shape[1], 1))
+
+"""**LSTM Model**
+
+ """
+
+# design network
+model = Sequential()
+model.add(LSTM(100, input_shape=(X_train.shape[1], X_train.shape[2]), return_sequences = True))
+model.add(LSTM(50, activation='relu', return_sequences=True))
+model.add(Dropout(0.25))
+model.add(LSTM(10, activation='relu'))
+model.add(Dense(20, activation='relu'))
+model.add(Dense(10, activation='relu'))
+ model.add(Dense(5, activation='relu'))
+model.add(Dropout(0.1))
+model.add(Dense(1))
+model.compile(optimizer='adam', loss='mse')
+# fit network
+history = model.fit(X_train, Y_train, epochs=25, batch_size=16, validation_data=(X_test, Y_test), verbose=2)
+# plot history
+
+from matplotlib import pyplot
+print(model.summary())
+pyplot.plot(history.history['loss'], label='train')
+pyplot.plot(history.history['val_loss'], label='test')
+pyplot.xlabel("Epoch")
+pyplot.ylabel("Mean Square Error")
+pyplot.title('MSE-AMC with sentiment')
+
+pyplot.title('Baseline comparsion of MSE for AMC without sentiment')
+pyplot.legend()
+ pyplot.show()
+
+ """**Prediction**
+
+ """
+
+pred = model.predict(X_test)
+
+import sklearn.metrics
+
+def regression_score(y_true, y_pred, metric):
+function = getattr(sklearn.metrics, metric)
+return function(y_true, y_pred)
+
+"""**Mean Absolute Error**"""
+
+#MAE
+regression_score(Y_test.astype(np.float) ,pred.astype(np.float),"mean_absolute_error")
+
+ """**Root Mean Square Error**"""
+from sklearn.metrics import mean_squared_error
+rmse = mean_squared_error(Y_test.astype(np.float) ,pred.astype(np.float), squared=False)
+rmse
+
+ """**MAPE**"""
+
+import numpy as np
+def mean_absolute_percentage_error(y_true, y_pred):
+return np.mean(np.abs((y_true - y_pred) / y_pred)) * 100
+mean_absolute_percentage_error(Y_test.astype(np.float) ,pred.astype(np.float))
